@@ -83,7 +83,7 @@ Crie estes secrets no repositorio:
 
 Variables uteis:
 
-- `MINER_SOURCE`: `all` por padrao no workflow; roda Reddit + OSM + verificacao.
+- `MINER_SOURCE`: `all` por padrao no workflow; roda Reddit + OSM + verificacao. No GitHub Actions, o Reddit e pulado automaticamente enquanto `REDDIT_CLIENT_ID` e `REDDIT_CLIENT_SECRET` nao estiverem configurados.
 - `GEMINI_MODEL`
 - `USE_REMOTE_SETTINGS`
 - `REDDIT_SUBREDDITS`

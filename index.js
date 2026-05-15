@@ -201,6 +201,20 @@ function requestedSources(config) {
   return [...new Set(sources)];
 }
 
+function hasRedditOAuth(config) {
+  return Boolean(config.redditClientId && config.redditClientSecret);
+}
+
+function shouldSkipRedditInGithubActions(config) {
+  return process.env.GITHUB_ACTIONS === "true" && !hasRedditOAuth(config);
+}
+
+function runtimeSources(config) {
+  const sources = requestedSources(config);
+  if (!sources.includes("reddit") || !shouldSkipRedditInGithubActions(config)) return sources;
+  return sources.filter((source) => source !== "reddit");
+}
+
 function printConfigStatus(config) {
   const rows = [
     ["SUPABASE_URL", Boolean(config.supabaseUrl)],
@@ -211,8 +225,9 @@ function printConfigStatus(config) {
     ["MINER_SOURCE", requestedSources(config).join(", ")],
     [
       "REDDIT_OAUTH",
-      config.redditClientId && config.redditClientSecret ? "ok" : "modo publico/fallback",
+      hasRedditOAuth(config) ? "ok" : "modo publico/fallback",
     ],
+    ["ACTIVE_SOURCES", runtimeSources(config).join(", ") || "nenhuma"],
     ["GEMINI_MODEL", config.geminiModel],
     ["REDDIT_SUBREDDITS", config.subreddits.join(", ")],
     ["REDDIT_KEYWORDS", `${config.keywords.length} termos`],
@@ -1467,17 +1482,28 @@ async function main() {
   validateConfig(config);
   config = await applyRemoteSettings(config);
 
-  const sources = requestedSources(config);
+  const requested = requestedSources(config);
+  const sources = runtimeSources(config);
   console.log("Guerrilla Miner iniciado.");
-  console.log(`Fontes: ${sources.join(", ")}`);
-  if (sources.includes("reddit")) {
+  console.log(`Fontes solicitadas: ${requested.join(", ")}`);
+  console.log(`Fontes ativas: ${sources.join(", ") || "nenhuma"}`);
+  if (requested.includes("reddit")) {
     console.log(
       `Reddit OAuth: ${
-        config.redditClientId && config.redditClientSecret
+        hasRedditOAuth(config)
           ? "configurado"
           : "nao configurado; crie REDDIT_CLIENT_ID e REDDIT_CLIENT_SECRET nos GitHub Secrets"
       }`
     );
+  }
+  if (requested.includes("reddit") && !sources.includes("reddit")) {
+    console.warn(
+      "[reddit] Pulado no GitHub Actions ate REDDIT_CLIENT_ID e REDDIT_CLIENT_SECRET serem configurados."
+    );
+  }
+  if (sources.length === 0) {
+    console.log("Nenhuma fonte ativa para executar.");
+    return;
   }
 
   const allSaved = [];

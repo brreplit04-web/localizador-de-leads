@@ -1,0 +1,50 @@
+name: Guerrilla Miner
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 */2 * * *"
+
+jobs:
+  reddit-miner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run miner
+        run: node index.js
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-2.5-flash' }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
+          MINER_SOURCE: ${{ vars.MINER_SOURCE || 'all' }}
+          USE_REMOTE_SETTINGS: ${{ vars.USE_REMOTE_SETTINGS || 'true' }}
+          REDDIT_SUBREDDITS: ${{ vars.REDDIT_SUBREDDITS }}
+          REDDIT_KEYWORDS: ${{ vars.REDDIT_KEYWORDS }}
+          REDDIT_LIMIT_PER_QUERY: ${{ vars.REDDIT_LIMIT_PER_QUERY }}
+          OSM_PLACES: ${{ vars.OSM_PLACES }}
+          OSM_CATEGORIES: ${{ vars.OSM_CATEGORIES }}
+          OSM_LIMIT: ${{ vars.OSM_LIMIT }}
+          OVERPASS_URL: ${{ vars.OVERPASS_URL }}
+          MAPS_QUERIES: ${{ vars.MAPS_QUERIES }}
+          MAPS_LIMIT_PER_QUERY: ${{ vars.MAPS_LIMIT_PER_QUERY }}
+          MAPS_MAX_RATING: ${{ vars.MAPS_MAX_RATING }}
+          VERIFY_AFTER_MAPS: ${{ vars.VERIFY_AFTER_MAPS || 'true' }}
+          VERIFY_LIMIT: ${{ vars.VERIFY_LIMIT }}
+          VERIFY_TIMEOUT_MS: ${{ vars.VERIFY_TIMEOUT_MS }}
+          GEMINI_BATCH_SIZE: ${{ vars.GEMINI_BATCH_SIZE }}

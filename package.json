@@ -1,0 +1,34 @@
+{
+  "name": "localizador_de_leads",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "mine:reddit": "node index.js --source=reddit",
+    "mine:osm": "node index.js --source=osm",
+    "mine:maps": "node index.js --source=maps",
+    "mine:csv": "node index.js --source=csv",
+    "mine:verify": "node index.js --source=verify",
+    "mine:all": "node index.js --source=all",
+    "mine:check": "node index.js --check",
+    "local:public": "node local_miners/public_intent_sampler.js",
+    "models": "node ver_modelos.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.0.1",
+    "vite": "^8.0.11"
+  },
+  "dependencies": {
+    "framer-motion": "^12.38.0",
+    "lucide-react": "^1.14.0",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6"
+  }
+}

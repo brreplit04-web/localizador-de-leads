@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+.env.local
+.env.*.local
+local-miner-results.json
+vite-dev*.log
+npm-debug.log*

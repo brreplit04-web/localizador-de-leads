@@ -32,6 +32,9 @@ jobs:
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-2.5-flash' }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
+          REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
+          REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
+          REDDIT_USER_AGENT: ${{ vars.REDDIT_USER_AGENT }}
           MINER_SOURCE: ${{ vars.MINER_SOURCE || 'all' }}
           USE_REMOTE_SETTINGS: ${{ vars.USE_REMOTE_SETTINGS || 'true' }}
           REDDIT_SUBREDDITS: ${{ vars.REDDIT_SUBREDDITS }}

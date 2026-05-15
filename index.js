@@ -137,6 +137,10 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function base64(value) {
+  return Buffer.from(value).toString("base64");
+}
+
 function getSupabaseKey() {
   return process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY || "";
 }
@@ -162,6 +166,11 @@ function getConfig() {
     csvInput: argValue("csv", process.env.CSV_INPUT || ""),
     subreddits: envList("REDDIT_SUBREDDITS", DEFAULT_SUBREDDITS),
     keywords: envList("REDDIT_KEYWORDS", DEFAULT_KEYWORDS),
+    redditClientId: process.env.REDDIT_CLIENT_ID || "",
+    redditClientSecret: process.env.REDDIT_CLIENT_SECRET || "",
+    redditUserAgent:
+      process.env.REDDIT_USER_AGENT ||
+      "node:guerrilla-miner:1.0 (lead intent research)",
     osmPlaces: envPlaceList("OSM_PLACES", DEFAULT_OSM_PLACES),
     osmCategories: envList("OSM_CATEGORIES", DEFAULT_OSM_CATEGORIES),
     osmLimit: Number(process.env.OSM_LIMIT || 80),
@@ -200,6 +209,10 @@ function printConfigStatus(config) {
     ["DISCORD_WEBHOOK_URL", Boolean(config.discordWebhookUrl)],
     ["GOOGLE_PLACES_API_KEY (opcional)", config.googlePlacesApiKey ? "ok" : "nao usado"],
     ["MINER_SOURCE", requestedSources(config).join(", ")],
+    [
+      "REDDIT_OAUTH",
+      config.redditClientId && config.redditClientSecret ? "ok" : "modo publico/fallback",
+    ],
     ["GEMINI_MODEL", config.geminiModel],
     ["REDDIT_SUBREDDITS", config.subreddits.join(", ")],
     ["REDDIT_KEYWORDS", `${config.keywords.length} termos`],
@@ -365,7 +378,74 @@ function redditSourceUrl(post) {
   return `https://www.reddit.com${post.permalink || ""}`;
 }
 
-async function fetchRedditPosts(subreddit, query, limit) {
+let redditTokenCache = null;
+
+async function getRedditAccessToken(config) {
+  if (!config.redditClientId || !config.redditClientSecret) return "";
+  if (redditTokenCache?.accessToken && redditTokenCache.expiresAt > Date.now() + 60_000) {
+    return redditTokenCache.accessToken;
+  }
+
+  const response = await fetch("https://www.reddit.com/api/v1/access_token", {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${base64(`${config.redditClientId}:${config.redditClientSecret}`)}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+      "User-Agent": config.redditUserAgent,
+    },
+    body: new URLSearchParams({ grant_type: "client_credentials" }).toString(),
+  });
+
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(`Reddit OAuth retornou HTTP ${response.status}: ${truncate(text, 220)}`);
+  }
+
+  const data = text ? JSON.parse(text) : {};
+  if (!data.access_token) {
+    throw new Error(`Reddit OAuth nao retornou access_token: ${truncate(text, 220)}`);
+  }
+
+  redditTokenCache = {
+    accessToken: data.access_token,
+    expiresAt: Date.now() + Number(data.expires_in || 3600) * 1000,
+  };
+
+  return redditTokenCache.accessToken;
+}
+
+async function fetchRedditPostsWithOAuth(config, subreddit, query, limit) {
+  const token = await getRedditAccessToken(config);
+  if (!token) return null;
+
+  const params = new URLSearchParams({
+    q: query,
+    restrict_sr: "true",
+    sort: "new",
+    t: "month",
+    raw_json: "1",
+    limit: String(limit),
+  });
+
+  const url = `https://oauth.reddit.com/r/${encodeURIComponent(subreddit)}/search?${params}`;
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "User-Agent": config.redditUserAgent,
+      Accept: "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(`Reddit OAuth r/${subreddit} retornou HTTP ${response.status}: ${truncate(detail, 180)}`);
+  }
+
+  const data = await response.json();
+  return (data?.data?.children || []).map((child) => child.data).filter(Boolean);
+}
+
+async function fetchRedditPostsPublic(config, subreddit, query, limit) {
   const params = new URLSearchParams({
     q: query,
     restrict_sr: "1",
@@ -377,7 +457,7 @@ async function fetchRedditPosts(subreddit, query, limit) {
   const url = `https://www.reddit.com/r/${encodeURIComponent(subreddit)}/search.json?${params}`;
   const response = await fetch(url, {
     headers: {
-      "User-Agent": "guerrilla-miner/1.0 lead-intent-research",
+      "User-Agent": config.redditUserAgent,
       Accept: "application/json",
     },
   });
@@ -390,6 +470,17 @@ async function fetchRedditPosts(subreddit, query, limit) {
   return (data?.data?.children || []).map((child) => child.data).filter(Boolean);
 }
 
+async function fetchRedditPosts(config, subreddit, query, limit) {
+  try {
+    const oauthPosts = await fetchRedditPostsWithOAuth(config, subreddit, query, limit);
+    if (oauthPosts) return oauthPosts;
+  } catch (error) {
+    console.warn(`[reddit] ${error.message}. Tentando fallback publico...`);
+  }
+
+  return fetchRedditPostsPublic(config, subreddit, query, limit);
+}
+
 async function collectRedditCandidates(config) {
   const seen = new Set();
   const candidates = [];
@@ -397,7 +488,7 @@ async function collectRedditCandidates(config) {
   for (const subreddit of config.subreddits) {
     for (const keyword of config.keywords) {
       try {
-        const posts = await fetchRedditPosts(subreddit, keyword, config.redditLimitPerQuery);
+        const posts = await fetchRedditPosts(config, subreddit, keyword, config.redditLimitPerQuery);
         for (const post of posts) {
           const sourceId = post.name || `reddit-${post.id}`;
           if (seen.has(sourceId)) continue;

@@ -56,6 +56,8 @@ CSV_INPUT=./leads.csv npm run mine:csv
 - `GEMINI_API_KEY` e `GEMINI_MODEL`: usadas para qualificar os candidatos.
 - `DISCORD_WEBHOOK_URL`: opcional, envia leads aprovados para o Discord.
 - `MINER_SOURCE`: `osm`, `reddit`, `maps`, `csv` ou `all`.
+- `REDDIT_CLIENT_ID` e `REDDIT_CLIENT_SECRET`: opcionais, mas recomendados para o Reddit rodar no GitHub Actions via OAuth oficial.
+- `REDDIT_USER_AGENT`: identificacao do app no Reddit, ex: `node:guerrilla-miner:1.0 (by /u/seu_usuario)`.
 - `OSM_PLACES`: cidades/regioes para o miner gratuito, separadas por ponto e virgula.
 - `OSM_CATEGORIES`: nichos locais buscados no OpenStreetMap.
 - `OSM_LIMIT`: limite de elementos retornados pelo Overpass.
@@ -75,6 +77,8 @@ Crie estes secrets no repositorio:
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `GEMINI_API_KEY`
 - `DISCORD_WEBHOOK_URL`
+- `REDDIT_CLIENT_ID`
+- `REDDIT_CLIENT_SECRET`
 - `GOOGLE_PLACES_API_KEY` apenas se for usar Google Maps pago
 
 Variables uteis:
@@ -84,6 +88,7 @@ Variables uteis:
 - `USE_REMOTE_SETTINGS`
 - `REDDIT_SUBREDDITS`
 - `REDDIT_KEYWORDS`
+- `REDDIT_USER_AGENT`
 - `OSM_PLACES`
 - `OSM_CATEGORIES`
 - `MAPS_QUERIES` opcional
@@ -91,6 +96,27 @@ Variables uteis:
 - `MAPS_LIMIT_PER_QUERY`
 - `MAPS_MAX_RATING`
 - `GEMINI_BATCH_SIZE`
+
+## Reddit OAuth
+
+O Reddit e uma fonte valiosa, mas o endpoint publico `reddit.com/.../search.json` pode bloquear IPs de datacenter como os do GitHub Actions com HTTP 403. Para manter o Reddit no minerador, configure OAuth oficial:
+
+1. Acesse `https://www.reddit.com/prefs/apps`.
+2. Clique em `create another app`.
+3. Escolha o tipo `script`.
+4. Preencha nome e descricao.
+5. Em `redirect uri`, use `http://localhost:8080`.
+6. Salve.
+7. Copie o `client id`, que aparece abaixo do nome do app.
+8. Copie o `secret`.
+9. No GitHub, crie os repository secrets `REDDIT_CLIENT_ID` e `REDDIT_CLIENT_SECRET`.
+10. Em repository variables, crie `REDDIT_USER_AGENT`, por exemplo:
+
+```txt
+node:guerrilla-miner:1.0 (by /u/seu_usuario_reddit)
+```
+
+Com essas chaves, o worker chama `https://oauth.reddit.com/r/{subreddit}/search` com bearer token. Sem elas, ele ainda tenta o modo publico como fallback.
 
 ## Supabase
 

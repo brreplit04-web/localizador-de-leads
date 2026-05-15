@@ -426,6 +426,10 @@ async function collectRedditCandidates(config) {
         }
       } catch (error) {
         console.warn(`[reddit] ${error.message}`);
+        if (/HTTP (403|429)/.test(error.message)) {
+          console.warn(`[reddit] Pulando r/${subreddit}; Reddit bloqueou ou limitou este ambiente.`);
+          break;
+        }
       }
       await sleep(650);
     }
@@ -943,18 +947,92 @@ function normalizeModelPath(model) {
 function extractJsonArray(text) {
   const clean = String(text || "")
     .trim()
-    .replace(/^```json\s*/i, "")
-    .replace(/^```\s*/i, "")
-    .replace(/```$/i, "")
+    .replace(/```json/gi, "```")
+    .replace(/```/g, "")
     .trim();
+
+  try {
+    const parsed = JSON.parse(clean);
+    if (Array.isArray(parsed)) return parsed;
+    for (const key of ["items", "leads", "results", "analysis", "analises"]) {
+      if (Array.isArray(parsed?.[key])) return parsed[key];
+    }
+  } catch {
+    // Continua tentando extrair o array de uma resposta com texto extra.
+  }
 
   const start = clean.indexOf("[");
   const end = clean.lastIndexOf("]");
   if (start === -1 || end === -1 || end <= start) {
-    throw new Error("Gemini nao retornou uma lista JSON valida.");
+    throw new Error(`Gemini nao retornou uma lista JSON valida. Trecho: ${truncate(clean, 260)}`);
   }
 
-  return JSON.parse(clean.slice(start, end + 1));
+  try {
+    return JSON.parse(clean.slice(start, end + 1));
+  } catch (error) {
+    throw new Error(`Gemini retornou JSON invalido: ${error.message}. Trecho: ${truncate(clean, 260)}`);
+  }
+}
+
+function fallbackLeadAnalysis(candidate, reason = "") {
+  const text = [
+    candidate.title,
+    candidate.content,
+    candidate.company_name,
+    candidate.niche,
+    candidate.metadata?.missing?.join(" "),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  let score = 30;
+  if (candidate.source === "openstreetmap" || candidate.source === "google_maps") score += 15;
+  if (!candidate.website_url) score += 25;
+  if (["weak", "failed"].includes(candidate.verification_status)) score += 22;
+  if (candidate.contact_phone) score += 8;
+  if (candidate.contact_email) score += 5;
+  if (/sem site|site ausente|website ausente|presenca digital fraca/.test(text)) score += 12;
+  if (/preciso|quero|orcamento|orçamento|travou|automatizar|perdendo|agenda|crm|whatsapp|loja virtual/.test(text)) {
+    score += 25;
+  }
+  if (/vaga|curriculo|currículo|contratando|emprego/.test(text)) score -= 35;
+
+  score = Math.max(0, Math.min(100, score));
+  const urgency = score >= 80 ? 5 : score >= 68 ? 4 : score >= 55 ? 3 : 2;
+  const company = candidate.company_name || candidate.author || "lead";
+  const noWebsite = !candidate.website_url || ["weak", "failed"].includes(candidate.verification_status);
+
+  return {
+    source_id: candidate.source_id,
+    approved: score >= 55,
+    urgency,
+    score,
+    niche: candidate.niche || "negocio local",
+    intent: noWebsite
+      ? "Melhorar presenca digital e captura de clientes."
+      : "Avaliar oportunidade operacional indicada por sinais publicos.",
+    pain_point: noWebsite
+      ? "Presenca digital incompleta ou site com problemas tecnicos."
+      : "Sinal publico indica possivel dor comercial ou operacional.",
+    offer_angle: noWebsite
+      ? `Abordar ${company} com uma auditoria simples de presenca digital e proposta objetiva de site/atendimento.`
+      : `Abordar ${company} de forma consultiva a partir do sinal encontrado.`,
+    contact_hint: candidate.contact_phone
+      ? "Usar contato publico da empresa com mensagem curta e permissiva."
+      : "Responder no canal de origem pedindo permissao para enviar uma ideia objetiva.",
+    reason: reason
+      ? `Fallback local porque a IA falhou: ${truncate(reason, 160)}`
+      : "Fallback local baseado em sinais objetivos do lead.",
+  };
+}
+
+function fallbackAnalyzeBatch(batch, error) {
+  return batch.map((candidate) => fallbackLeadAnalysis(candidate, error?.message || ""));
+}
+
+function shouldRetryWithSmallerBatch(error) {
+  return /JSON|lista JSON|invalido|inválido/i.test(error?.message || "");
 }
 
 async function analyzeBatch(config, batch) {
@@ -1037,12 +1115,29 @@ url: ${item.source_url || "vazio"}
   return extractJsonArray(text);
 }
 
+async function analyzeBatchSafely(config, batch) {
+  try {
+    return await analyzeBatch(config, batch);
+  } catch (error) {
+    if (batch.length > 1 && shouldRetryWithSmallerBatch(error)) {
+      console.warn(`[gemini] ${error.message}. Tentando lotes menores...`);
+      const middle = Math.ceil(batch.length / 2);
+      const left = await analyzeBatchSafely(config, batch.slice(0, middle));
+      const right = await analyzeBatchSafely(config, batch.slice(middle));
+      return [...left, ...right];
+    }
+
+    console.warn(`[gemini] ${error.message}. Usando fallback local para ${batch.length} candidato(s).`);
+    return fallbackAnalyzeBatch(batch, error);
+  }
+}
+
 async function analyzeCandidates(config, candidates) {
   const byId = new Map(candidates.map((candidate) => [candidate.source_id, candidate]));
   const approved = [];
 
   for (const batch of chunk(candidates, config.geminiBatchSize)) {
-    const analysis = await analyzeBatch(config, batch);
+    const analysis = await analyzeBatchSafely(config, batch);
     for (const item of analysis) {
       if (!item?.approved) continue;
       const original = byId.get(item.source_id);

@@ -1142,6 +1142,10 @@ function fallbackAnalyzeBatch(batch, error) {
   return batch.map((candidate) => fallbackLeadAnalysis(candidate, error?.message || ""));
 }
 
+function isGeminiQuotaError(error) {
+  return /HTTP 429|RESOURCE_EXHAUSTED|Quota exceeded/i.test(error?.message || "");
+}
+
 function shouldRetryWithSmallerBatch(error) {
   return /JSON|lista JSON|invalido|inválido/i.test(error?.message || "");
 }
@@ -1227,9 +1231,18 @@ url: ${item.source_url || "vazio"}
 }
 
 async function analyzeBatchSafely(config, batch) {
+  if (config.geminiFallbackOnly) {
+    console.warn(`[gemini] Fallback local ativo para ${batch.length} candidato(s).`);
+    return fallbackAnalyzeBatch(batch, new Error("Gemini quota indisponivel nesta execucao"));
+  }
+
   try {
     return await analyzeBatch(config, batch);
   } catch (error) {
+    if (isGeminiQuotaError(error)) {
+      config.geminiFallbackOnly = true;
+    }
+
     if (batch.length > 1 && shouldRetryWithSmallerBatch(error)) {
       console.warn(`[gemini] ${error.message}. Tentando lotes menores...`);
       const middle = Math.ceil(batch.length / 2);
@@ -1294,24 +1307,86 @@ async function fetchExistingHashes(config, hashes) {
   return existing;
 }
 
+function dedupeLeadsForSave(leads) {
+  const selected = new Map();
+  let skipped = 0;
+
+  for (const lead of leads) {
+    const key = lead.lead_hash ? `hash:${lead.lead_hash}` : `source:${lead.source}:${lead.source_id}`;
+    const current = selected.get(key);
+
+    if (!current) {
+      selected.set(key, lead);
+      continue;
+    }
+
+    skipped += 1;
+    const currentRank = Number(current.score || 0) * 10 + Number(current.urgency || 0);
+    const nextRank = Number(lead.score || 0) * 10 + Number(lead.urgency || 0);
+    if (nextRank > currentRank) selected.set(key, lead);
+  }
+
+  return { leads: [...selected.values()], skipped };
+}
+
+function isDuplicateLeadHashError(error) {
+  return /23505|leads_hash_unique_idx|duplicate key value/i.test(error?.message || "");
+}
+
+async function upsertLeadsIndividually(config, leads) {
+  const saved = [];
+  const endpoint = "leads?on_conflict=source,source_id";
+
+  for (const lead of leads) {
+    try {
+      const rows = await supabaseRequest(config, endpoint, {
+        method: "POST",
+        prefer: "resolution=merge-duplicates,return=representation",
+        body: JSON.stringify([lead]),
+      });
+      saved.push(...(rows || []));
+    } catch (error) {
+      if (isDuplicateLeadHashError(error)) {
+        console.warn(`[supabase] Lead duplicado por lead_hash ignorado: ${lead.lead_hash || lead.source_id}`);
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  return saved;
+}
+
 async function upsertLeads(config, leads) {
   if (leads.length === 0) return [];
   if (config.dryRun) return leads;
 
+  const deduped = dedupeLeadsForSave(leads);
+  if (deduped.skipped > 0) {
+    console.log(`[supabase] Leads duplicados no lote ignorados por lead_hash: ${deduped.skipped}`);
+  }
+
   const existingHashes = await fetchExistingHashes(
     config,
-    leads.map((lead) => lead.lead_hash)
+    deduped.leads.map((lead) => lead.lead_hash)
   );
-  const filtered = leads.filter((lead) => !lead.lead_hash || !existingHashes.has(lead.lead_hash));
+  const filtered = deduped.leads.filter((lead) => !lead.lead_hash || !existingHashes.has(lead.lead_hash));
 
   if (filtered.length === 0) return [];
 
   const endpoint = "leads?on_conflict=source,source_id";
-  const saved = await supabaseRequest(config, endpoint, {
-    method: "POST",
-    prefer: "resolution=merge-duplicates,return=representation",
-    body: JSON.stringify(filtered),
-  });
+  let saved;
+  try {
+    saved = await supabaseRequest(config, endpoint, {
+      method: "POST",
+      prefer: "resolution=merge-duplicates,return=representation",
+      body: JSON.stringify(filtered),
+    });
+  } catch (error) {
+    if (!isDuplicateLeadHashError(error)) throw error;
+    console.warn("[supabase] Conflito por lead_hash no lote; salvando individualmente e pulando duplicados.");
+    return upsertLeadsIndividually(config, filtered);
+  }
 
   return saved || [];
 }

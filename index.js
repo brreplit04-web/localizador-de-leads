@@ -183,12 +183,13 @@ function getConfig() {
 }
 
 function requestedSources(config) {
-  const source = String(config.source || "reddit").toLowerCase();
-  if (source === "all") return ["reddit", "osm", "verify"];
-  return source
+  const sources = String(config.source || "reddit")
     .split(",")
-    .map((item) => item.trim())
+    .map((item) => item.trim().toLowerCase())
     .filter(Boolean);
+
+  if (sources.includes("all")) return ["reddit", "osm", "verify"];
+  return [...new Set(sources)];
 }
 
 function printConfigStatus(config) {

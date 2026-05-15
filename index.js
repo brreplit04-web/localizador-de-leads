@@ -471,6 +471,11 @@ async function fetchRedditPostsPublic(config, subreddit, query, limit) {
 }
 
 async function fetchRedditPosts(config, subreddit, query, limit) {
+  if (!config.redditClientId || !config.redditClientSecret) {
+    console.warn("[reddit] OAuth nao configurado; usando fallback publico sujeito a HTTP 403 no GitHub Actions.");
+    return fetchRedditPostsPublic(config, subreddit, query, limit);
+  }
+
   try {
     const oauthPosts = await fetchRedditPostsWithOAuth(config, subreddit, query, limit);
     if (oauthPosts) return oauthPosts;
@@ -1465,6 +1470,15 @@ async function main() {
   const sources = requestedSources(config);
   console.log("Guerrilla Miner iniciado.");
   console.log(`Fontes: ${sources.join(", ")}`);
+  if (sources.includes("reddit")) {
+    console.log(
+      `Reddit OAuth: ${
+        config.redditClientId && config.redditClientSecret
+          ? "configurado"
+          : "nao configurado; crie REDDIT_CLIENT_ID e REDDIT_CLIENT_SECRET nos GitHub Secrets"
+      }`
+    );
+  }
 
   const allSaved = [];
   for (const source of sources) {
